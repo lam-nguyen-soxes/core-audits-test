@@ -14,7 +14,7 @@ provider "postgresql" {
   superuser       = false
 }
 
-resource "azurerm_resource_group" "core_audits_test" {
-  name     = var.resource_group_name
-  location = var.location
-}
+# resource "azurerm_resource_group" "core_audits_test" {
+#   name     = var.resource_group_name
+#   location = var.location
+# }
