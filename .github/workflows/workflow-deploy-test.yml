@@ -1,0 +1,123 @@
+name: Deploy Demo Environment
+
+on:
+  # workflow_run:
+  #   workflows: ["Run CI Workflow"]
+  #   types:
+  #     - completed
+  #   branches: [demo]
+  workflow_dispatch:
+    # inputs: 
+    #   ci_run_id: 
+    #     description: "Run ID of Run CI Workflow" 
+    #     required: true
+    #   manual_tag:
+    #     description: "Commit SHA (Tag) to deploy"
+    #     required: false
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+jobs:
+  # check-ci-workflow-success:
+  #   name: Check CI Workflow Success
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 5
+  #   if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
+  #   outputs:
+  #     ci_workflow_success: ${{ steps.check.outputs.success }}
+  #   steps:
+  #     - name: Check CI Workflow result
+  #       id: check
+  #       run: |
+  #         if [ "${{ github.event.workflow_run.conclusion }}" == "success" ] || [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+  #           echo "success=true" >> $GITHUB_OUTPUT
+  #         else
+  #           echo "success=false" >> $GITHUB_OUTPUT
+  #         fi
+
+  # prepare-variables:
+  #   name: Prepare Reusable Variables
+  #   needs: check-ci-workflow-success
+  #   if: needs.check-ci-workflow-success.outputs.ci_workflow_success == 'true'
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 5
+  #   outputs:
+  #     revision_suffix: ${{ steps.calc.outputs.revision }}
+  #   steps:
+  #     - name: Calculate revision suffix
+  #       id: calc
+  #       run: echo "revision=${{ github.run_id }}-${{ github.run_attempt }}" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy to test
+    # needs: prepare-variables
+    uses: ./.github/workflows/tool-deploy-infrastructure.yml
+    with:
+      # tag: ${{ github.event.inputs.manual_tag || github.event.workflow_run.head_sha || github.sha }}
+      environment: "test"
+      # new_deployment_revision_suffix: ${{ needs.prepare-variables.outputs.revision_suffix }}
+    secrets: inherit
+
+  # run-db-migration-core-audits:
+  #   name: Run Database Migration for Core Audits
+  #   needs: deploy
+  #   uses: OEKO-TEX/SharedInfrastructure/.github/workflows/tool-migrate-database.yml@main
+  #   with:
+  #     environment: "Demo"
+  #     run_id: ${{ inputs.ci_run_id || github.event.workflow_run.id }}
+  #     bundle_name: "ef_core_audits"
+  #   secrets: inherit
+  
+  # run-db-migration-audit-trail:
+  #   name: Run Database Migration for Audit Trail
+  #   needs: deploy
+  #   uses: OEKO-TEX/SharedInfrastructure/.github/workflows/tool-migrate-database.yml@main
+  #   with:
+  #     environment: "Demo"
+  #     run_id: ${{ inputs.ci_run_id || github.event.workflow_run.id }}
+  #     bundle_name: "ef_audit_trail"
+  #   secrets:
+  #     MIGRATION_DATABASE_CONNECTION_STRING: ${{ secrets.AUDIT_TRAIL_MIGRATION_DATABASE_CONNECTION_STRING }}
+
+  # get-api-revision-url:
+  #   name: Get API Revision URL
+  #   needs: [prepare-variables, deploy]
+  #   uses: OEKO-TEX/SharedInfrastructure/.github/workflows/tool-get-container-app-revision-url.yml@main
+  #   with: 
+  #     environment: "Demo"
+  #     revision_suffix: ${{ needs.prepare-variables.outputs.revision_suffix }}
+  #     container_app: '${{ vars.API_NAME }}'
+  #   secrets: inherit
+
+  # health-check-api:
+  #   name: Health Check API
+  #   needs: [run-db-migration-core-audits, run-db-migration-audit-trail, get-api-revision-url]
+  #   uses: OEKO-TEX/SharedInfrastructure/.github/workflows/tool-health-check.yml@main
+  #   with:
+  #     url: ${{ needs.get-api-revision-url.outputs.revision_url }}
+
+  # promote-api-release-candidate:
+  #   name: Promote Backend API Release Candidate to Demo
+  #   needs: [prepare-variables, health-check-api]
+  #   uses: OEKO-TEX/SharedInfrastructure/.github/workflows/tool-promote-release-candidate.yml@main
+  #   with:
+  #     environment: "Demo"
+  #     revision_suffix: ${{ needs.prepare-variables.outputs.revision_suffix }}
+  #     container_app: '${{ vars.API_NAME }}'
+  #   secrets: inherit
+
+  # promote-app-release-candidate:
+  #   name: Promote App Release Candidate to Demo
+  #   needs: [prepare-variables, promote-api-release-candidate]
+  #   uses: OEKO-TEX/SharedInfrastructure/.github/workflows/tool-promote-release-candidate.yml@main
+  #   with:
+  #     environment: "Demo"
+  #     revision_suffix: ${{ needs.prepare-variables.outputs.revision_suffix }}
+  #     container_app: '${{ vars.APP_NAME }}'
+  #   secrets: inherit

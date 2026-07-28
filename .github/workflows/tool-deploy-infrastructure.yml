@@ -1,0 +1,154 @@
+name: Deploy Infrastructure
+
+on:
+  workflow_call:
+    inputs:
+      # tag:
+      #   required: true
+      #   type: string
+        description: "Container image tag to deploy"
+      environment:
+        required: true
+        type: string
+        description: "Environment to deploy to (Staging, Demo, Replica, Production)"
+    #   new_deployment_revision_suffix:
+    #     required: true
+    #     type: string
+    #     description: "Suffix that will be used for both containers (app and API) deployment"
+    # outputs:
+    #   api_url:
+    #     description: "The deployed API URL"
+    #     value: ${{ jobs.deploy.outputs.api_url }}
+
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    # outputs:
+    #   api_url: ${{ steps.get-api-url.outputs.api_url }}
+    env:
+      TF_WORKING_DIR: ./terraform
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.13.4
+
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Switch to Platform Subscription
+        run: |
+          az account set --subscription ${{ secrets.PLATFORM_AZURE_SUBSCRIPTION_ID }}
+      
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TFSTATE_CONTAINER_NAME }}" \
+            -backend-config="key=${{ vars.TFSTATE_KEY }}" \
+            -backend-config="subscription_id=${{ secrets.PLATFORM_AZURE_SUBSCRIPTION_ID }}"
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.PLATFORM_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Switch to Deployment Subscription
+        run: |
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      
+      # - name: Get Current Active Revisions (App and API) Suffixes
+      #   id: get-revisions
+      #   run: |
+      #     ENVIRONMENT_LOWER=$(echo "${{ inputs.environment }}" | tr '[:upper:]' '[:lower:]')
+          
+      #     echo "API_CURRENT_SUFFIX=$(az containerapp revision list --name ${ENVIRONMENT_LOWER}-${{ vars.API_NAME }} --resource-group ${{ vars.RESOURCE_GROUP }} --query "[?properties.trafficWeight ==\`100\`].name" -o tsv | awk -F'--' '{print $2}')" >> $GITHUB_OUTPUT
+      #     echo "APP_CURRENT_SUFFIX=$(az containerapp revision list --name ${ENVIRONMENT_LOWER}-${{ vars.APP_NAME }} --resource-group ${{ vars.RESOURCE_GROUP }} --query "[?properties.trafficWeight ==\`100\`].name" -o tsv | awk -F'--' '{print $2}')" >> $GITHUB_OUTPUT
+
+      - name: Terraform Plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -out=tfplan
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_resource_group_name: ${{ vars.RESOURCE_GROUP }}
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_shared_postgres_flexible_server_id: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID}}
+          TF_VAR_shared_postgres_flexible_server_fqdn: ${{ vars.SHARED_POSTGRES_FLEXIBLE_SERVER_FQDN }}
+          TF_VAR_shared_postgres_flexible_server_admin_username: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_USERNAME }}
+          TF_VAR_shared_postgres_flexible_server_admin_password: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_PASSWORD }}
+          # TF_VAR_shared_container_app_environment_id: ${{ secrets.SHARED_CONTAINER_APP_ENVIRONMENT_ID }}
+          # TF_VAR_azure_container_registry_server: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+          # TF_VAR_azure_container_registry_username: ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }}
+          # TF_VAR_azure_container_registry_password: ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }}
+          # TF_VAR_jwt_audience: ${{ vars.JWT_AUDIENCE }}
+          # TF_VAR_jwt_realm: ${{ vars.JWT_REALM }}
+          # TF_VAR_jwt_client_id: ${{ vars.JWT_CLIENT_ID }}
+          # TF_VAR_jwt_scope: ${{ vars.JWT_SCOPE }}
+          # TF_VAR_jwt_issuer: ${{ vars.JWT_ISSUER }}
+          # TF_VAR_container_image_tag: ${{ inputs.tag }}
+          # TF_VAR_new_deployment_revision_suffix: ${{ inputs.new_deployment_revision_suffix }}
+          TF_VAR_environment: ${{ inputs.environment }}
+          # TF_VAR_pdf_generator_api_base_url: ${{ vars.PDF_GENERATOR_API_BASE_URL }}          
+          # TF_VAR_pdf_generator_api_key: ${{ secrets.PDF_GENERATOR_API_KEY }}
+          # TF_VAR_pdf_generator_api_secret: ${{ secrets.PDF_GENERATOR_API_SECRET }}
+          # TF_VAR_pdf_generator_testing_mode: ${{ vars.PDF_GENERATOR_TESTING_MODE || 'true' }}
+          # TF_VAR_storage_api_base_url: ${{ vars.STORAGE_API_BASE_URL }}
+          # TF_VAR_storage_api_scopes: ${{ vars.STORAGE_API_SCOPES }}
+          # TF_VAR_jwt_client_secret: ${{ secrets.JWT_CLIENT_SECRET }}
+          # TF_VAR_storage_api_client_id: ${{ vars.STORAGE_API_CLIENT_ID }}
+          # TF_VAR_coresystem_host: ${{ vars.CORESYSTEM_HOST }}
+          # TF_VAR_api_name: ${{ vars.API_NAME }}
+          # TF_VAR_api_cors_allowed_origins: ${{ vars.API_ALLOWED_ORIGINS }}
+          # TF_VAR_api_url: ${{ vars.API_URL }}
+          # TF_VAR_api_current_active_revision_suffix: ${{ steps.get-revisions.outputs.API_CURRENT_SUFFIX }}
+          # TF_VAR_api_core_synchronization_client_id: ${{ vars.CORE_SYNCHRONIZATION_CLIENT_ID }}
+          # TF_VAR_api_core_synchronization_client_secret: ${{ secrets.CORE_SYNCHRONIZATION_CLIENT_SECRET }}
+          # TF_VAR_api_core_synchronization_scope: ${{ vars.CORE_SYNCHRONIZATION_SCOPE }}
+          # TF_VAR_core_api_url: ${{ vars.CORE_API_URL }}
+          # TF_VAR_app_name: ${{ vars.APP_NAME }}
+          # TF_VAR_app_current_active_revision_suffix: ${{ steps.get-revisions.outputs.APP_CURRENT_SUFFIX }}
+          # TF_VAR_core_app_url: ${{ vars.CORE_APP_URL }}
+          # TF_VAR_otel_exporter_oltp_protocol: ${{ vars.OTEL_EXPORTER_OTLP_PROTOCOL }}
+          # TF_VAR_otel_exporter_oltp_endpoint: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          # TF_VAR_open_telemetry_authorization_header: ${{ secrets.OPEN_TELEMETRY_AUTHORIZATION_HEADER }}
+          # TF_VAR_initial_setup_runner_name: ${{ vars.INITIAL_SETUP_RUNNER_NAME }}
+          # TF_VAR_initial_setup_runner_client_id: ${{ vars.INITIAL_SETUP_RUNNER_CLIENT_ID }}
+          # TF_VAR_initial_setup_runner_client_secret: ${{ secrets.INITIAL_SETUP_RUNNER_CLIENT_SECRET }}
+          # TF_VAR_initial_setup_runner_scope: ${{ vars.INITIAL_SETUP_RUNNER_SCOPE }}
+          # TF_VAR_host: ${{ vars.HOST }}
+          # TF_VAR_shared_acr_pull_identity_id: ${{ secrets.SHARED_ACR_PULL_IDENTITY_ID }}
+          
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        
