@@ -1,0 +1,194 @@
+name: Rename Audit Trail Database
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to rename the audit-trail database in"
+        required: true
+        type: choice
+        options:
+          - test
+
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # stop-api-traffic:
+  #   name: Stop API Traffic
+  #   runs-on: azure-paid-runner-${{ inputs.environment }}
+  #   environment: ${{ inputs.environment }}
+  #   timeout-minutes: 10
+  #   outputs:
+  #     app_name: ${{ steps.get-revision.outputs.app_name }}
+  #     resource_group: ${{ steps.get-revision.outputs.resource_group }}
+  #     active_revision: ${{ steps.get-revision.outputs.active_revision }}
+  #   steps:
+  #     - name: Azure Login with OIDC
+  #       uses: azure/login@v2
+  #       with:
+  #         client-id: ${{ secrets.AZURE_CLIENT_ID }}
+  #         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+  #         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+  #     - name: Get active API revision
+  #       id: get-revision
+  #       run: |
+  #         ENV_LOWER=$(echo "${{ inputs.environment }}" | tr '[:upper:]' '[:lower:]')
+  #         APP_NAME="${ENV_LOWER}-${{ vars.API_NAME }}"
+  #         ACTIVE_REVISION=$(az containerapp revision list \
+  #           --name "$APP_NAME" \
+  #           --resource-group ${{ vars.RESOURCE_GROUP }} \
+  #           --query "[?properties.trafficWeight==\`100\`].name" -o tsv)
+
+  #         echo "app_name=${APP_NAME}" >> "$GITHUB_OUTPUT"
+  #         echo "resource_group=${{ vars.RESOURCE_GROUP }}" >> "$GITHUB_OUTPUT"
+  #         echo "active_revision=${ACTIVE_REVISION}" >> "$GITHUB_OUTPUT"
+
+  #     - name: Deactivate active revision
+  #       run: |
+  #         az containerapp revision deactivate \
+  #           --name "${{ steps.get-revision.outputs.app_name }}" \
+  #           --resource-group "${{ steps.get-revision.outputs.resource_group }}" \
+  #           --revision "${{ steps.get-revision.outputs.active_revision }}"
+
+  # rename-database:
+  #   name: Rename Audit Trail Database
+  #   needs: stop-api-traffic
+  #   runs-on: azure-paid-runner-${{ inputs.environment }}
+  #   environment: ${{ inputs.environment }}
+  #   timeout-minutes: 10
+  #   outputs:
+  #     old_name: ${{ steps.names.outputs.old_name }}
+  #     new_name: ${{ steps.names.outputs.new_name }}
+  #   steps:
+  #     - name: Compute database names
+  #       id: names
+  #       run: |
+  #         ENV_LOWER=$(echo "${{ inputs.environment }}" | tr '[:upper:]' '[:lower:]')
+  #         echo "old_name=${ENV_LOWER}-audit-trail" >> "$GITHUB_OUTPUT"
+  #         echo "new_name=${ENV_LOWER}-core-audits-audit-trail" >> "$GITHUB_OUTPUT"
+
+  #     - name: Ensure psql is available
+  #       run: which psql || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+
+  #     - name: Terminate connections and rename database
+  #       env:
+  #         PGHOST: ${{ vars.SHARED_POSTGRES_FLEXIBLE_SERVER_FQDN }}
+  #         PGUSER: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_USERNAME }}
+  #         PGPASSWORD: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_PASSWORD }}
+  #         PGSSLMODE: require
+  #         OLD_NAME: ${{ steps.names.outputs.old_name }}
+  #         NEW_NAME: ${{ steps.names.outputs.new_name }}
+  #       run: |
+  #         psql -d postgres -v ON_ERROR_STOP=1 -c "
+  #           SELECT pg_terminate_backend(pid)
+  #           FROM pg_stat_activity
+  #           WHERE datname = '${OLD_NAME}' AND pid <> pg_backend_pid();
+
+  #           ALTER DATABASE \"${OLD_NAME}\" RENAME TO \"${NEW_NAME}\";
+          
+
+  update-terraform-state:
+    name: Fix Terraform State
+    runs-on: azure-paid-runner-${{ inputs.environment }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+    env:
+      TF_WORKING_DIR: ./terraform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.13.4
+
+      - name: Azure Login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Switch to Platform Subscription
+        run: az account set --subscription ${{ secrets.PLATFORM_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ vars.TFSTATE_CONTAINER_NAME }}" \
+            -backend-config="key=${{ vars.TFSTATE_KEY }}" \
+            -backend-config="subscription_id=${{ secrets.PLATFORM_AZURE_SUBSCRIPTION_ID }}"
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.PLATFORM_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Switch to Deployment Subscription
+        run: az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # These values only need to be *valid*, not necessarily the ones a real deploy would pick -
+      # this job only ever plans/imports with -target on the database resource below, so drift on
+      # the container apps (which always shows a diff by design - see new_deployment_revision_suffix)
+      # is irrelevant here. We still fetch real current values to avoid confusing output.
+      # - name: Get current deployment values
+      #   id: current
+      #   run: |
+      #     ENV_LOWER=$(echo "${{ inputs.environment }}" | tr '[:upper:]' '[:lower:]')
+
+      #     API_CURRENT_SUFFIX=$(az containerapp revision list --name ${ENV_LOWER}-${{ vars.API_NAME }} --resource-group ${{ vars.RESOURCE_GROUP }} --query "[?properties.trafficWeight==\`100\`].name" -o tsv | awk -F'--' '{print $2}')
+      #     APP_CURRENT_SUFFIX=$(az containerapp revision list --name ${ENV_LOWER}-${{ vars.APP_NAME }} --resource-group ${{ vars.RESOURCE_GROUP }} --query "[?properties.trafficWeight==\`100\`].name" -o tsv | awk -F'--' '{print $2}')
+      #     CURRENT_IMAGE_TAG=$(az containerapp show --name ${ENV_LOWER}-${{ vars.API_NAME }} --resource-group ${{ vars.RESOURCE_GROUP }} --query "properties.template.containers[0].image" -o tsv | awk -F':' '{print $NF}')
+
+      #     echo "api_current_suffix=${API_CURRENT_SUFFIX}" >> "$GITHUB_OUTPUT"
+      #     echo "app_current_suffix=${APP_CURRENT_SUFFIX}" >> "$GITHUB_OUTPUT"
+      #     echo "current_image_tag=${CURRENT_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Re-import renamed database into state
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform state rm azurerm_postgresql_flexible_server_database.postgres_audit_trail
+          terraform import azurerm_postgresql_flexible_server_database.postgres_audit_trail \
+            "${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID }}/databases/${{ inputs.environment }}-core-audits-audit-trail"
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # TF_VAR_resource_group_name: ${{ vars.RESOURCE_GROUP }}
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_shared_postgres_flexible_server_id: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID}}
+          TF_VAR_shared_postgres_flexible_server_fqdn: ${{ vars.SHARED_POSTGRES_FLEXIBLE_SERVER_FQDN }}
+          TF_VAR_shared_postgres_flexible_server_admin_username: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_USERNAME }}
+          TF_VAR_shared_postgres_flexible_server_admin_password: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_PASSWORD }}          
+          TF_VAR_container_image_tag: ${{ steps.current.outputs.current_image_tag }}
+          TF_VAR_environment: ${{ inputs.environment }}
+          
+
+      - name: Verify renamed database has no pending changes
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -target=azurerm_postgresql_flexible_server_database.postgres_audit_trail -detailed-exitcode
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # TF_VAR_resource_group_name: ${{ vars.RESOURCE_GROUP }}
+          TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_shared_postgres_flexible_server_id: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID}}
+          TF_VAR_shared_postgres_flexible_server_fqdn: ${{ vars.SHARED_POSTGRES_FLEXIBLE_SERVER_FQDN }}
+          TF_VAR_shared_postgres_flexible_server_admin_username: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_USERNAME }}
+          TF_VAR_shared_postgres_flexible_server_admin_password: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_PASSWORD }}          
+          TF_VAR_container_image_tag: ${{ steps.current.outputs.current_image_tag }}
+          TF_VAR_environment: ${{ inputs.environment }}
