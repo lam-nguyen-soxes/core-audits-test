@@ -158,7 +158,7 @@ jobs:
       - name: Re-import renamed database into state
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          terraform state rm azurerm_postgresql_flexible_server_database.postgres_audit_trail
+          terraform state rm azurerm_postgresql_flexible_server_database.postgres_audit_trail || true
           terraform import azurerm_postgresql_flexible_server_database.postgres_audit_trail \
             "${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID }}/databases/${{ inputs.environment }}-audit-trail"
         env:
