@@ -57,41 +57,41 @@ jobs:
   #           --resource-group "${{ steps.get-revision.outputs.resource_group }}" \
   #           --revision "${{ steps.get-revision.outputs.active_revision }}"
 
-  # rename-database:
-  #   name: Rename Audit Trail Database
-  #   needs: stop-api-traffic
-  #   runs-on: azure-paid-runner-${{ inputs.environment }}
-  #   environment: ${{ inputs.environment }}
-  #   timeout-minutes: 10
-  #   outputs:
-  #     old_name: ${{ steps.names.outputs.old_name }}
-  #     new_name: ${{ steps.names.outputs.new_name }}
-  #   steps:
-  #     - name: Compute database names
-  #       id: names
-  #       run: |
-  #         ENV_LOWER=$(echo "${{ inputs.environment }}" | tr '[:upper:]' '[:lower:]')
-  #         echo "old_name=${ENV_LOWER}-audit-trail" >> "$GITHUB_OUTPUT"
-  #         echo "new_name=${ENV_LOWER}-core-audits-audit-trail" >> "$GITHUB_OUTPUT"
+  rename-database:
+    name: Rename Audit Trail Database
+    needs: stop-api-traffic
+    runs-on: azure-paid-runner-${{ inputs.environment }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 10
+    outputs:
+      old_name: ${{ steps.names.outputs.old_name }}
+      new_name: ${{ steps.names.outputs.new_name }}
+    steps:
+      - name: Compute database names
+        id: names
+        run: |
+          ENV_LOWER=$(echo "${{ inputs.environment }}" | tr '[:upper:]' '[:lower:]')
+          echo "old_name=${ENV_LOWER}-audit-trail" >> "$GITHUB_OUTPUT"
+          echo "new_name=${ENV_LOWER}-core-audits-audit-trail" >> "$GITHUB_OUTPUT"
 
-  #     - name: Ensure psql is available
-  #       run: which psql || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+      - name: Ensure psql is available
+        run: which psql || (sudo apt-get update && sudo apt-get install -y postgresql-client)
 
-  #     - name: Terminate connections and rename database
-  #       env:
-  #         PGHOST: ${{ vars.SHARED_POSTGRES_FLEXIBLE_SERVER_FQDN }}
-  #         PGUSER: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_USERNAME }}
-  #         PGPASSWORD: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_PASSWORD }}
-  #         PGSSLMODE: require
-  #         OLD_NAME: ${{ steps.names.outputs.old_name }}
-  #         NEW_NAME: ${{ steps.names.outputs.new_name }}
-  #       run: |
-  #         psql -d postgres -v ON_ERROR_STOP=1 -c "
-  #           SELECT pg_terminate_backend(pid)
-  #           FROM pg_stat_activity
-  #           WHERE datname = '${OLD_NAME}' AND pid <> pg_backend_pid();
+      - name: Terminate connections and rename database
+        env:
+          PGHOST: ${{ vars.SHARED_POSTGRES_FLEXIBLE_SERVER_FQDN }}
+          PGUSER: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_USERNAME }}
+          PGPASSWORD: ${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ADMIN_PASSWORD }}
+          PGSSLMODE: require
+          OLD_NAME: ${{ steps.names.outputs.old_name }}
+          NEW_NAME: ${{ steps.names.outputs.new_name }}
+        run: |
+          psql -d postgres -v ON_ERROR_STOP=1 -c "
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = '${OLD_NAME}' AND pid <> pg_backend_pid();
 
-  #           ALTER DATABASE \"${OLD_NAME}\" RENAME TO \"${NEW_NAME}\";
+            ALTER DATABASE \"${OLD_NAME}\" RENAME TO \"${NEW_NAME}\";
           
 
   update-terraform-state:
@@ -160,7 +160,7 @@ jobs:
         run: |
           terraform state rm azurerm_postgresql_flexible_server_database.postgres_audit_trail || true
           terraform import azurerm_postgresql_flexible_server_database.postgres_audit_trail \
-            "${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID }}/databases/${{ inputs.environment }}-audit-trail"
+            "${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID }}/databases/${{ inputs.environment }}-core-audits-audit-trail"
         env:
           ARM_USE_OIDC: true
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
