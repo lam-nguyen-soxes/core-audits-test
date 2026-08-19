@@ -94,7 +94,7 @@ resource "postgresql_grant" "core_audits_existing_sequences" {
 }
 
 resource "azurerm_postgresql_flexible_server_database" "postgres_audit_trail" {
-  name      = "${lower(var.environment)}-core-audits-audit-trail"
+  name      = "${lower(var.environment)}-audit-trail"
   server_id = var.shared_postgres_flexible_server_id
   collation = var.postgres_collation
   charset   = "UTF8"

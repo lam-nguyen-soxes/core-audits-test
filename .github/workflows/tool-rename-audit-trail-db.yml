@@ -160,7 +160,7 @@ jobs:
         run: |
           terraform state rm azurerm_postgresql_flexible_server_database.postgres_audit_trail
           terraform import azurerm_postgresql_flexible_server_database.postgres_audit_trail \
-            "${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID }}/databases/${{ inputs.environment }}-core-audits-audit-trail"
+            "${{ secrets.SHARED_POSTGRES_FLEXIBLE_SERVER_ID }}/databases/${{ inputs.environment }}-audit-trail"
         env:
           ARM_USE_OIDC: true
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
