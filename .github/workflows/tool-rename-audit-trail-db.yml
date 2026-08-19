@@ -92,7 +92,7 @@ jobs:
             WHERE datname = '${OLD_NAME}' AND pid <> pg_backend_pid();
 
             ALTER DATABASE \"${OLD_NAME}\" RENAME TO \"${NEW_NAME}\";
-          
+          "
 
   update-terraform-state:
     name: Fix Terraform State
