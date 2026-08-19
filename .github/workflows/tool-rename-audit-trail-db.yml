@@ -60,7 +60,7 @@ jobs:
   rename-database:
     name: Rename Audit Trail Database
     #needs: stop-api-traffic
-    runs-on: azure-paid-runner-${{ inputs.environment }}
+    runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: 10
     outputs:
