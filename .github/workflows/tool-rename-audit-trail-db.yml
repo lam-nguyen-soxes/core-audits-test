@@ -96,6 +96,7 @@ jobs:
 
   update-terraform-state:
     name: Fix Terraform State
+    needs: rename-database
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: 15
